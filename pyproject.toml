@@ -1,0 +1,35 @@
+[project]
+name = "docsqa-langgraph-assignment"
+version = "0.1.0"
+description = "LangGraph-powered document QA assignment app with login, upload deduplication, vector search, and web search."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi>=0.115.0",
+  "jinja2>=3.1.4",
+  "langchain-community>=0.3.0",
+  "langchain-groq>=0.2.0",
+  "langchain-huggingface>=0.1.0",
+  "langchain-text-splitters>=0.3.0",
+  "langgraph>=0.2.35",
+  "passlib[bcrypt]>=1.7.4",
+  "pgvector>=0.3.6",
+  "psycopg[binary]>=3.2.1",
+  "pydantic-settings>=2.5.2",
+  "pypdf>=5.0.1",
+  "python-jose[cryptography]>=3.3.0",
+  "python-multipart>=0.0.9",
+  "sqlalchemy>=2.0.35",
+  "sentence-transformers>=3.0.1",
+  "uvicorn[standard]>=0.30.6",
+  "email-validator>=2.2.0",
+  "tavily-python==0.7.23",
+  "supabase>=2.7.4",
+]
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["app*"]

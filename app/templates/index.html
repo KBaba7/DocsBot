@@ -1,0 +1,577 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>DocsQA Assignment</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <link rel="stylesheet" href="/static/style.css" />
+  </head>
+  <body>
+    <div class="bg-orb orb-one"></div>
+    <div class="bg-orb orb-two"></div>
+    <main class="shell">
+      {% if not user %}
+      <section class="hero card">
+        <div class="hero-topline">
+          <p class="eyebrow">LangGraph Assignment</p>
+          <span class="badge">FastAPI + Supabase + PGVector</span>
+        </div>
+        <h1>DocsQA Workspace</h1>
+        <p class="lede">
+          Upload PDFs, avoid duplicate reprocessing by file hash, and ask an agent that uses user-scoped document retrieval with optional web search.
+        </p>
+        {% if db_unavailable %}
+        <p class="db-warning">
+          Database connection is temporarily unavailable. This is usually a transient DNS/network issue with the Supabase host. Please retry shortly.
+        </p>
+        {% endif %}
+      </section>
+      {% else %}
+      <section class="workspace-strip card">
+        <div>
+          <p class="eyebrow">LangGraph Assignment</p>
+          <h1>DocsQA Workspace</h1>
+          <p class="muted">Private document chat with structured sources.</p>
+        </div>
+        <span class="badge">FastAPI + Supabase + PGVector</span>
+      </section>
+      {% endif %}
+
+      {% if not user %}
+      <section class="grid two auth-grid">
+        <form class="card panel" id="register-form" method="post" action="/register">
+          <div class="panel-head">
+            <h2>Create account</h2>
+            <p>Start by creating your personal docs workspace.</p>
+          </div>
+          <label>Email <input type="email" name="email" required /></label>
+          <label>Password <input type="password" name="password" required /></label>
+          <button type="submit">Register</button>
+          <pre class="result ok" id="register-result"></pre>
+        </form>
+
+        <form class="card panel" id="login-form" method="post" action="/login">
+          <div class="panel-head">
+            <h2>Sign in</h2>
+            <p>Continue with your existing account.</p>
+          </div>
+          <label>Email <input type="email" name="email" required /></label>
+          <label>Password <input type="password" name="password" required /></label>
+          <button type="submit">Login</button>
+          <pre class="result ok" id="login-result"></pre>
+        </form>
+      </section>
+      {% else %}
+      <section class="app-layout">
+        <aside class="card panel sidebar-panel">
+          <div class="panel-head">
+            <h2 class="user-email">{{ user.email }}</h2>
+            <p class="muted">Your uploaded docs are private to this account.</p>
+          </div>
+
+          <form id="upload-form" class="panel">
+            <label class="muted">Upload PDFs (max 5 files, 10 pages each)</label>
+            <input type="file" id="file" name="file" accept="application/pdf" multiple required />
+            <button type="submit">Upload</button>
+          </form>
+          <pre class="result" id="upload-result"></pre>
+
+          <div class="panel-head panel-head-inline">
+            <h3>Your documents</h3>
+            <span class="badge">{{ documents|length }}</span>
+          </div>
+          <div class="docs sidebar-docs">
+            {% for document in documents %}
+            <article class="doc">
+              <header class="doc-head">
+                <h3>{{ document.filename }}</h3>
+                <span class="doc-pages">{{ document.page_count }} pages</span>
+              </header>
+              <div class="doc-actions">
+                <button
+                  type="button"
+                  class="danger doc-delete-btn"
+                  data-document-id="{{ document.id }}"
+                  data-document-name="{{ document.filename }}"
+                >
+                  Delete
+                </button>
+              </div>
+            </article>
+            {% else %}
+            <p class="muted">No documents uploaded yet.</p>
+            {% endfor %}
+          </div>
+
+          <form method="post" action="/logout" id="logout-form">
+            <button type="submit" class="secondary">Sign out</button>
+          </form>
+        </aside>
+
+        <section class="card panel chat-shell chat-panel">
+          <div class="panel-head panel-head-inline">
+            <h2>DocsQA Chat</h2>
+            <span class="badge">Markdown enabled</span>
+          </div>
+          <div id="chat-thread" class="chat-thread">
+            <article class="chat-msg assistant">
+              <div class="chat-bubble chat-bubble-assistant chat-markdown">
+                <p>Ask anything about your uploaded PDFs and I will answer with citations from retrieved chunks.</p>
+              </div>
+            </article>
+          </div>
+          <form id="ask-form" class="chat-composer">
+            <textarea
+              id="query"
+              rows="3"
+              placeholder="Message DocsQA..."
+              required
+            ></textarea>
+            <button type="submit">Send</button>
+          </form>
+        </section>
+      </section>
+      {% endif %}
+    </main>
+
+    <script>
+      const registerForm = document.getElementById("register-form");
+      const loginForm = document.getElementById("login-form");
+      const logoutForm = document.getElementById("logout-form");
+      const registerResult = document.getElementById("register-result");
+      const loginResult = document.getElementById("login-result");
+      const uploadForm = document.getElementById("upload-form");
+      const askForm = document.getElementById("ask-form");
+      const uploadResult = document.getElementById("upload-result");
+      const chatThread = document.getElementById("chat-thread");
+      const queryInput = document.getElementById("query");
+      const docDeleteButtons = document.querySelectorAll(".doc-delete-btn");
+
+      const safeJson = async (response) => {
+        try {
+          return await response.json();
+        } catch {
+          return { detail: "Unexpected non-JSON response" };
+        }
+      };
+
+      const prettyError = (body) => {
+        if (!body) return "Request failed.";
+        if (typeof body.detail === "string") return body.detail;
+        if (typeof body.message === "string") return body.message;
+        return "Request failed.";
+      };
+
+      const setBusy = (form, busy) => {
+        if (!form) return;
+        const button = form.querySelector("button[type='submit']");
+        if (!button) return;
+        button.disabled = busy;
+        if (busy) {
+          button.dataset.originalText = button.textContent;
+          button.textContent = "Please wait...";
+        } else if (button.dataset.originalText) {
+          button.textContent = button.dataset.originalText;
+        }
+      };
+
+      const escapeHtml = (value) =>
+        value
+          .replaceAll("&", "&amp;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;");
+
+      const normalizeTabularAnswer = (text) => {
+        const lines = text.split("\n");
+        const out = [];
+        let i = 0;
+
+        while (i < lines.length) {
+          const line = lines[i];
+          if (!line.includes("\t")) {
+            out.push(line);
+            i += 1;
+            continue;
+          }
+
+          const rows = [];
+          while (i < lines.length && lines[i].includes("\t")) {
+            rows.push(lines[i].split("\t").map((cell) => cell.trim()));
+            i += 1;
+          }
+
+          if (rows.length < 2) {
+            out.push(...rows.map((row) => row.join(" ")));
+            continue;
+          }
+
+          const columnCount = Math.max(...rows.map((row) => row.length));
+          const paddedRows = rows.map((row) => {
+            const copy = [...row];
+            while (copy.length < columnCount) copy.push("");
+            return copy.map((cell) => cell.replaceAll("|", "\\|").replaceAll("\n", "<br>"));
+          });
+
+          out.push(`| ${paddedRows[0].join(" | ")} |`);
+          out.push(`| ${Array(columnCount).fill("---").join(" | ")} |`);
+          for (const row of paddedRows.slice(1)) {
+            out.push(`| ${row.join(" | ")} |`);
+          }
+        }
+
+        return out.join("\n");
+      };
+
+      const sanitizeHtml = (html) => {
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(html, "text/html");
+        doc.querySelectorAll("script,style,iframe,object,embed").forEach((node) => node.remove());
+        for (const el of doc.querySelectorAll("*")) {
+          for (const attr of [...el.attributes]) {
+            const name = attr.name.toLowerCase();
+            const value = attr.value.toLowerCase();
+            if (name.startsWith("on")) {
+              el.removeAttribute(attr.name);
+            }
+            if ((name === "href" || name === "src") && value.startsWith("javascript:")) {
+              el.removeAttribute(attr.name);
+            }
+          }
+        }
+        return doc.body.innerHTML;
+      };
+
+      const renderMarkdown = (text) => {
+        const normalized = normalizeTabularAnswer(text || "");
+        if (window.marked?.parse) {
+          const html = window.marked.parse(normalized, { gfm: true, breaks: true });
+          return sanitizeHtml(html);
+        }
+        return `<pre>${escapeHtml(normalized)}</pre>`;
+      };
+
+      const stripSourceStatusLines = (text) => {
+        if (!text) return "";
+        const withoutSourcesSection = text.replace(/\n+\s*(?:#+\s*)?sources\s*:?\s*\n[\s\S]*$/i, "").trim();
+        return withoutSourcesSection
+          .split("\n")
+          .filter((line) => !/^\s*no sources were used for this response\.?\s*$/i.test(line.trim()))
+          .filter((line) => !/^\s*no citations available for this turn\.?\s*$/i.test(line.trim()))
+          .join("\n")
+          .trim();
+      };
+
+      const buildSourcesMarkdown = (sources) => {
+        const vectorSources = Array.isArray(sources?.vector) ? sources.vector : [];
+        const webSources = Array.isArray(sources?.web) ? sources.web : [];
+        const lines = [];
+
+        if (vectorSources.length) {
+          lines.push("### Document Sources");
+          for (const src of vectorSources) {
+            const doc = src.document || "Unknown document";
+            const page = src.page || "unknown";
+            const excerpt = src.excerpt || "";
+            lines.push(`- **${doc}**, page **${page}**`);
+            if (excerpt) {
+              lines.push(`  - "${excerpt}"`);
+            }
+          }
+        }
+
+        if (webSources.length) {
+          if (lines.length) lines.push("");
+          lines.push("### Web Sources");
+          for (const src of webSources) {
+            const title = src.title || "Untitled source";
+            const url = src.url || "";
+            if (url && url !== "N/A") {
+              lines.push(`- [${title}](${url})`);
+            } else {
+              lines.push(`- ${title}`);
+            }
+          }
+        }
+
+        if (lines.length) return lines.join("\n");
+        return "_No citations available for this turn._";
+      };
+
+      const sourceStopwords = new Set([
+        "the", "and", "for", "with", "from", "that", "this", "what", "who", "how", "are", "was", "were", "is",
+        "of", "about", "tell", "more", "please", "can", "you", "your", "according", "resume"
+      ]);
+
+      const extractQueryTerms = (queryText) => {
+        const raw = (queryText || "").toLowerCase().match(/[a-z0-9_]+/g) || [];
+        const deduped = [];
+        const seen = new Set();
+        for (const term of raw) {
+          if (term.length < 3 || sourceStopwords.has(term) || seen.has(term)) continue;
+          seen.add(term);
+          deduped.push(term);
+        }
+        return deduped;
+      };
+
+      const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+      const highlightMatches = (text, terms) => {
+        const plain = text || "";
+        if (!terms.length) return escapeHtml(plain);
+        const pattern = new RegExp(`\\b(${terms.map(escapeRegex).join("|")})\\b`, "gi");
+        return escapeHtml(plain).replace(pattern, "<mark>$1</mark>");
+      };
+
+      const renderSourcesHtml = (sources, queryText = "") => {
+        const vectorSources = Array.isArray(sources?.vector) ? sources.vector : [];
+        const webSources = Array.isArray(sources?.web) ? sources.web : [];
+        const terms = extractQueryTerms(queryText);
+
+        const sections = [];
+
+        if (vectorSources.length) {
+          const vectorCards = vectorSources
+            .map((src) => {
+              const documentId = (src.document_id || "").toString().trim();
+              const doc = escapeHtml(src.document || "Unknown document");
+              const page = escapeHtml(src.page || "unknown");
+              const excerptHtml = highlightMatches(src.excerpt || "", terms);
+              const pageNumber = Number.parseInt(src.page || "", 10);
+              const pageAnchor = Number.isFinite(pageNumber) && pageNumber > 0 ? `#page=${pageNumber}` : "";
+              const pdfUrl = documentId ? `/documents/${encodeURIComponent(documentId)}/pdf${pageAnchor}` : "";
+              return `
+                <article class="source-card">
+                  <div class="source-meta">
+                    <span class="source-doc">${doc}</span>
+                    <span class="source-page">Page ${page}</span>
+                  </div>
+                  <p class="source-excerpt">${excerptHtml || "No excerpt available."}</p>
+                  ${
+                    pdfUrl
+                      ? `<div class="source-actions"><a class="source-link" href="${pdfUrl}" target="_blank" rel="noopener noreferrer">Open PDF</a></div>`
+                      : ""
+                  }
+                </article>
+              `;
+            })
+            .join("");
+          sections.push(`<section><h4>Document Sources</h4><div class="source-list">${vectorCards}</div></section>`);
+        }
+
+        if (webSources.length) {
+          const webItems = webSources
+            .map((src) => {
+              const title = escapeHtml(src.title || "Untitled source");
+              const url = src.url || "";
+              if (url && url !== "N/A") {
+                return `<li><a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">${title}</a></li>`;
+              }
+              return `<li>${title}</li>`;
+            })
+            .join("");
+          sections.push(`<section><h4>Web Sources</h4><ul class="source-web-list">${webItems}</ul></section>`);
+        }
+
+        if (!sections.length) {
+          return `<p class="muted">No citations available for this turn.</p>`;
+        }
+        return sections.join("");
+      };
+
+      const renderAssistantResponse = (container, fullAnswerText, sourceDict = null, queryText = "") => {
+        if (!container) return;
+        const answerContent = stripSourceStatusLines(fullAnswerText) || "Response received.";
+        const sourcesContent = renderSourcesHtml(sourceDict, queryText);
+
+        container.innerHTML = "";
+
+        const answerPanel = document.createElement("div");
+        answerPanel.className = "message-panel";
+        answerPanel.innerHTML = renderMarkdown(answerContent);
+
+        container.appendChild(answerPanel);
+
+        const details = document.createElement("details");
+        details.className = "source-dropdown";
+        const summary = document.createElement("summary");
+        summary.textContent = "Sources";
+        const body = document.createElement("div");
+        body.className = "sources-panel";
+        body.innerHTML = sourcesContent;
+        details.appendChild(summary);
+        details.appendChild(body);
+        container.appendChild(details);
+      };
+
+      const appendMessage = ({ role, text, markdown = false, pending = false, isError = false }) => {
+        if (!chatThread) return null;
+        const row = document.createElement("article");
+        row.className = `chat-msg ${role}`;
+
+        const bubble = document.createElement("div");
+        bubble.className = `chat-bubble ${role === "user" ? "chat-bubble-user" : "chat-bubble-assistant"}`;
+        if (markdown) bubble.classList.add("chat-markdown");
+        if (pending) bubble.classList.add("chat-pending");
+        if (isError) bubble.classList.add("chat-error");
+
+        if (markdown) {
+          bubble.innerHTML = renderMarkdown(text);
+        } else {
+          bubble.textContent = text;
+        }
+
+        row.appendChild(bubble);
+        chatThread.appendChild(row);
+        chatThread.scrollTop = chatThread.scrollHeight;
+        return bubble;
+      };
+
+      registerForm?.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        setBusy(registerForm, true);
+        const formData = new FormData(registerForm);
+        const response = await fetch("/register", { method: "POST", body: formData });
+        const body = await safeJson(response);
+        registerResult.textContent = response.ok
+          ? "Registration successful. Redirecting to your workspace..."
+          : prettyError(body);
+        registerResult.classList.toggle("error", !response.ok);
+        setBusy(registerForm, false);
+        if (response.ok) {
+          window.location.reload();
+        }
+      });
+
+      loginForm?.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        setBusy(loginForm, true);
+        const formData = new FormData(loginForm);
+        const response = await fetch("/login", { method: "POST", body: formData });
+        const body = await safeJson(response);
+        loginResult.textContent = response.ok
+          ? "Login successful. Redirecting..."
+          : prettyError(body);
+        loginResult.classList.toggle("error", !response.ok);
+        setBusy(loginForm, false);
+        if (response.ok) {
+          window.location.reload();
+        }
+      });
+
+      logoutForm?.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const response = await fetch("/logout", { method: "POST" });
+        if (response.ok) {
+          window.location.reload();
+        }
+      });
+
+      uploadForm?.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        setBusy(uploadForm, true);
+        const formData = new FormData();
+        const fileInput = document.getElementById("file");
+        const files = Array.from(fileInput?.files || []);
+        if (!files.length) {
+          uploadResult.textContent = "Please choose at least one PDF.";
+          uploadResult.classList.add("error");
+          setBusy(uploadForm, false);
+          return;
+        }
+        for (const file of files) {
+          formData.append("file", file);
+        }
+        const response = await fetch("/upload", { method: "POST", body: formData });
+        const body = await safeJson(response);
+        if (response.ok) {
+          const createdCount = (body.documents || []).filter((doc) => doc.created).length;
+          const reusedCount = (body.documents || []).length - createdCount;
+          uploadResult.textContent =
+            `Uploaded ${body.count} file(s). ${createdCount} indexed, ${reusedCount} reused.\n` +
+            (body.documents || [])
+              .map((doc) => `- ${doc.filename} (${doc.page_count} pages)`)
+              .join("\n");
+        } else {
+          uploadResult.textContent = prettyError(body);
+        }
+        uploadResult.classList.toggle("error", !response.ok);
+        setBusy(uploadForm, false);
+        if (response.ok) {
+          window.location.reload();
+        }
+      });
+
+      docDeleteButtons.forEach((button) => {
+        button.addEventListener("click", async () => {
+          const documentId = button.dataset.documentId;
+          const documentName = button.dataset.documentName || "this document";
+          if (!documentId) return;
+          const confirmed = window.confirm(`Delete ${documentName} from your documents?`);
+          if (!confirmed) return;
+
+          button.disabled = true;
+          const response = await fetch(`/documents/${documentId}`, { method: "DELETE" });
+          const body = await safeJson(response);
+          if (!response.ok) {
+            button.disabled = false;
+            uploadResult.textContent = prettyError(body);
+            uploadResult.classList.add("error");
+            return;
+          }
+          window.location.reload();
+        });
+      });
+
+      askForm?.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const query = queryInput?.value?.trim() || "";
+        if (!query) return;
+
+        appendMessage({ role: "user", text: query });
+        if (queryInput) queryInput.value = "";
+        setBusy(askForm, true);
+        const pendingBubble = appendMessage({ role: "assistant", text: "Thinking...", markdown: false, pending: true });
+
+        const response = await fetch("/ask", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ query }),
+        });
+        const body = await safeJson(response);
+        const target = pendingBubble || appendMessage({ role: "assistant", text: "", markdown: false });
+        if (!target) {
+          setBusy(askForm, false);
+          return;
+        }
+        target.classList.remove("chat-pending");
+
+        if (response.ok) {
+          const answerText = body.answer || "Response received.";
+          target.classList.add("chat-markdown");
+          renderAssistantResponse(target, answerText, body.sources || null, query);
+        } else {
+          const message = prettyError(body);
+          target.classList.add("chat-error");
+          target.textContent = message;
+        }
+        chatThread.scrollTop = chatThread.scrollHeight;
+        setBusy(askForm, false);
+      });
+
+      queryInput?.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" && !event.shiftKey) {
+          event.preventDefault();
+          askForm?.requestSubmit();
+        }
+      });
+    </script>
+  </body>
+</html>
