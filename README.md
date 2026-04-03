@@ -23,7 +23,7 @@ If the uploaded documents are not enough, the agent falls back to web search and
 - Railway deployment
 
 ## Workflow
-![Workflow](docs/workflow.png)
+![Workflow](docs/Workflow.png)
 
 ## How Retrieval Works
 
