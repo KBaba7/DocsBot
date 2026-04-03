@@ -247,7 +247,7 @@ button {
 .sidebar-docs {
   flex: 1 1 auto;
   min-height: 0;
-  overflow: auto;
+  overflow-y: auto;
   padding-right: 0.25rem;
 }
 
@@ -685,6 +685,51 @@ code {
 .summary {
   margin: 0;
   color: #2d251d;
+}
+
+.sidebar-tabs {
+  display: flex;
+  gap: 0.4rem;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 0.6rem;
+  flex-shrink: 0;
+}
+
+.tab-btn {
+  flex: 1;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.88rem;
+  font-weight: 600;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--ink-2);
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+.tab-btn:hover {
+  background: rgba(178, 74, 0, 0.07);
+  filter: none;
+}
+
+.tab-btn.active {
+  background: linear-gradient(135deg, var(--brand-1), var(--brand-2));
+  color: #fff;
+  border-color: transparent;
+}
+
+.tab-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.tab-panel.hidden {
+  display: none;
 }
 
 @keyframes fade-up {
