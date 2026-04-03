@@ -1,112 +1,108 @@
-# DocsQA LangGraph Assignment
+# DocsQA Smart Research Assistant
 
-RAG-powered research assistant with:
+This is my take-home submission for the ABSTRABIT AI/ML Engineer assignment: a RAG-powered assistant where users upload PDFs, ask questions, and get grounded answers with citations.
 
-- Auth (register/login/logout) using HTTP-only cookie sessions
-- Multi-file PDF upload (up to 5 files/request, max 10 pages/file)
-- Duplicate detection by SHA-256 hash with cross-user document reuse
-- Vector indexing in Supabase Postgres + `pgvector`
-- LangGraph agent with document retrieval + web search fallback
-- Session conversation memory for follow-up questions
-- Source citations in answers for both document and web evidence
-- Chat-style UI with markdown rendering
+## Live Project
 
-## Architecture
+- Live app (Railway): `https://docsbot-web-production.up.railway.app`
+- GitHub: `https://github.com/KBaba7/DocsBot`
+- Loom walkthrough: _add your link here_
 
-- Backend: FastAPI + SQLAlchemy
-- Agent: LangGraph ReAct agent
-- LLM: Groq chat model
-- Vector store: Supabase Postgres with `pgvector`
-- Search fallback: Tavily (preferred) or DuckDuckGo when available
+## What I Built
+
+The app supports authentication, PDF upload (up to 5 files and 10 pages per file), document chunking + vector indexing, and a chat experience that answers from uploaded documents first.  
+If the uploaded documents are not enough, the agent falls back to web search and cites those sources too.
+
+## Stack
+
+- FastAPI + SQLAlchemy
+- LangGraph agent
+- Groq chat model
+- Supabase Postgres + `pgvector`
+- Railway deployment
+
+## How Retrieval Works
+
+Uploaded PDFs are parsed page by page and split into chunks.  
+Each chunk is stored with metadata (document, page number, chunk index) and embedded into `pgvector`.
+
+At question time:
+1. The app searches relevant chunks from the user’s accessible documents.
+2. The agent answers from those chunks when possible.
+3. If evidence is weak, the agent uses web search and cites external URLs.
 
 ## Chunking Strategy
 
-- Splitter: recursive character splitter (`chunk_size=1200`, `chunk_overlap=200`)
-- Why:
-  - 1200 keeps enough local context for legal/business clauses
-  - 200 overlap reduces boundary loss between adjacent chunks
-  - good balance for retrieval accuracy vs. embedding cost
-- Indexing is page-aware: each stored chunk carries `page_number` metadata.
+- Chunk size: `1200`
+- Overlap: `200`
+
+Why this setup:
+- Long, structured documents need enough contiguous context.
+- Overlap helps avoid missing content around chunk boundaries.
+- It gives a practical quality/cost balance for retrieval.
 
 ## Retrieval Approach
 
-- Retrieval method: cosine similarity search in `pgvector`
-- Pipeline:
-  - determine relevant user-owned document hashes
-  - embed query
-  - retrieve top-k chunks across selected docs
-- Returned evidence includes:
-  - document filename
-  - page number
-  - excerpt text
-- Final assistant answer is instructed to cite these in a human-friendly source section.
+I use cosine similarity search in `pgvector` (no reranker yet).  
+The top matches are turned into readable citations (document name + page + snippet), and those are shown per answer in the UI.
 
 ## Agent Routing Logic
 
-- Default behavior: prefer `vector_search` for questions answerable from uploaded docs.
-- If document evidence is insufficient, agent can call `web_search` tool.
-- Web search output is normalized to citation-friendly rows (title, URL, snippet).
-- Prompt requires:
-  - vector citations: document + page + excerpt
-  - web citations: website title + URL
+The agent is prompted to prefer document context first.
+
+- If retrieved document context is sufficient: answer from documents with citations.
+- If not sufficient: clearly say docs are insufficient and use web search tool.
+
+This is implemented as tool-based behavior in LangGraph rather than a static fallback message.
+
+## Source Citations
+
+Each turn stores/returns source metadata separately from the answer body.
+
+- Vector source cards include:
+  - document name
+  - page number
+  - excerpt (short snippet from retrieved chunk)
+- Web source cards include:
+  - title
+  - URL
+
+## Conversation Memory
+
+Conversation history is maintained within session scope, so follow-ups like “tell me more about that” work as expected.
 
 ## Bonus Feature
 
-**Implemented bonus:** User-scoped retrieval with automatic document dedup reuse.
+I added hash-based deduplicated ingestion:
 
-- If two users upload the same file, processing/indexing is reused by file hash.
-- Ownership is still enforced via `user_documents` mapping, so retrieval stays user-scoped.
-- Why chosen: materially improves performance/cost while preserving access boundaries.
+- If the same PDF is uploaded again, processing/indexing is reused.
+- Access control is still user-scoped via ownership mapping.
 
-## Problems Faced and Fixes
+Why I chose this:
+- saves compute/time,
+- avoids duplicate indexing,
+- keeps retrieval secure per user.
 
-- Dependency mismatch (`transformers`/`sentence-transformers`/`torch`) causing startup errors.
-  - Added robust local fallback embedding path to keep app functional.
-- Optional web-search dependency (`ddgs`) missing.
-  - Added graceful web tool fallback and Tavily direct tool support.
-- Passlib bcrypt backend issues.
-  - Switched new password hashing to `pbkdf2_sha256` while retaining bcrypt verify compatibility.
-- Template/render and response UX issues.
-  - Reworked frontend into a stable chat-style UI with clean result handling.
+## Challenges I Ran Into
+
+1. Heavy embedding dependencies made deployment images too large.
+   - I switched to lightweight embeddings for deployment and added Jina API embedding support.
+2. Source rendering got messy across multiple chat turns.
+   - I separated answer text from source payloads and extracted sources per turn.
+3. Intermittent DB DNS/pooler issues during deployment.
+   - I improved connection handling and standardized Supabase transaction-pooler config.
 
 ## If I Had More Time
 
-- Add proper migration tooling (Alembic) instead of startup `ALTER TABLE`.
-- Add reranking for higher retrieval precision on long multi-document queries.
-- Add persistent server-side conversation storage (Redis/Postgres) for multi-worker deployments.
-- Add automated evaluation suite for citation faithfulness and retrieval quality.
+- Add reranking (cross-encoder) for better precision on long multi-doc queries.
+- Add automated citation-faithfulness checks.
+- Add Alembic migrations for cleaner schema evolution.
+- Add stronger eval/observability for routing and retrieval quality.
 
-## Environment Setup
+## Local Setup
 
 ```bash
 cp .env.example .env
-```
-
-Required:
-
-- `GROQ_API_KEY`
-- `SECRET_KEY`
-- `DATABASE_URL` (Supabase transaction pooler recommended)
-
-Optional:
-
-- `TAVILY_API_KEY` (for Tavily web search)
-
-Storage (optional, recommended for deployment):
-
-- `STORAGE_BACKEND=local` or `supabase`
-- `SUPABASE_URL`
-- `SUPABASE_SERVICE_ROLE_KEY`
-- `SUPABASE_STORAGE_BUCKET` (default: `documents`)
-- `SUPABASE_STORAGE_PREFIX` (default: `docsqa`)
-
-Recommended `DATABASE_URL` format:
-
-`postgresql+psycopg://<user>:<password>@<pooler-host>:6543/postgres?sslmode=require`
-
-## Install and Run
-
-```bash
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -e .
@@ -115,10 +111,29 @@ uvicorn app.main:app --reload
 
 Open: `http://127.0.0.1:8000`
 
-## File Storage Mode
+## Important Environment Variables
 
-- Local dev default: `STORAGE_BACKEND=local` (writes under `UPLOAD_DIRECTORY`).
-- Deployment recommendation: `STORAGE_BACKEND=supabase` to store PDFs in Supabase Storage instead of local disk.
+Required:
+- `GROQ_API_KEY`
+- `SECRET_KEY`
+- `DATABASE_URL`
+
+Embeddings (recommended):
+- `JINA_API_KEY`
+- `JINA_API_BASE` (default: `https://api.jina.ai/v1/embeddings`)
+- `JINA_EMBEDDING_MODEL` (default: `jina-embeddings-v3`)
+- `EMBEDDING_DIMENSIONS` (default: `1024`)
+
+Storage:
+- `STORAGE_BACKEND=local|supabase`
+- `SUPABASE_URL`
+- `SUPABASE_SERVICE_ROLE_KEY`
+- `SUPABASE_STORAGE_BUCKET`
+- `SUPABASE_STORAGE_PREFIX`
+
+Web search:
+- `WEB_SEARCH_PROVIDER=duckduckgo|tavily`
+- `TAVILY_API_KEY` (if using Tavily)
 
 ## API Endpoints
 
@@ -127,57 +142,20 @@ Open: `http://127.0.0.1:8000`
 - `POST /logout`
 - `POST /upload`
 - `GET /documents`
+- `DELETE /documents/{document_id}`
+- `GET /documents/{document_id}/pdf`
 - `POST /ask`
 
-## test_documents
+## Sample Documents
 
-Sample PDFs used during development are in `test_documents/`.
+As requested in the assignment, sample PDFs are included in `test_documents/`.
 
-## Deployment and Loom
+## Railway Deployment
 
-- Live deployed URL: _add your deployed link here_
-- Loom walkthrough (<5 min): _add your Loom link here_
+```bash
+railway login
+railway link
+railway up
+```
 
-## Deploy on Render
-
-This repo now includes a `render.yaml` Blueprint.
-
-1. Push the latest `main` branch to GitHub.
-2. In Render, click **New +** -> **Blueprint**.
-3. Connect GitHub and select this repository.
-4. Render will detect `render.yaml` and create a `docsbot` web service.
-5. Set required secret env vars in Render:
-   - `SECRET_KEY`
-   - `DATABASE_URL`
-   - `GROQ_API_KEY`
-   - `SUPABASE_URL`
-   - `SUPABASE_SERVICE_ROLE_KEY`
-   - optionally `TAVILY_API_KEY`
-6. Deploy and open the generated Render URL.
-
-Render uses:
-- Build command: `pip install -e .`
-- Start command: `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
-
-## Deploy on Fly.io
-
-This repo includes `Dockerfile` and `fly.toml`.
-
-1. Install Fly CLI:
-   - macOS: `brew install flyctl`
-2. Login:
-   - `fly auth login`
-3. If app name `docsbot-kbaba7` is unavailable, change `app` in `fly.toml`.
-4. Create app (first time only):
-   - `fly apps create docsbot-kbaba7`
-5. Set secrets:
-   - `fly secrets set SECRET_KEY=...`
-   - `fly secrets set DATABASE_URL=...`
-   - `fly secrets set GROQ_API_KEY=...`
-   - `fly secrets set SUPABASE_URL=...`
-   - `fly secrets set SUPABASE_SERVICE_ROLE_KEY=...`
-   - optional: `fly secrets set TAVILY_API_KEY=...`
-6. Deploy:
-   - `fly deploy`
-7. Open app:
-   - `fly open`
+Set the same env vars in Railway service settings before deploying.

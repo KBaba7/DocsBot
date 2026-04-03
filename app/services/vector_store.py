@@ -3,6 +3,7 @@ import math
 import re
 from typing import Any
 
+import requests
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
@@ -65,25 +66,70 @@ class LocalHashEmbeddings:
         return [value / norm for value in vector]
 
 
+class JinaEmbeddings:
+    def __init__(self, *, api_key: str, base_url: str, model: str, dimensions: int) -> None:
+        self.api_key = api_key
+        self.base_url = base_url
+        self.model = model
+        self.dimensions = dimensions
+
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        return self._embed(texts=texts, task="retrieval.passage")
+
+    def embed_query(self, text: str) -> list[float]:
+        vectors = self._embed(texts=[text], task="retrieval.query")
+        return vectors[0] if vectors else [0.0] * self.dimensions
+
+    def _embed(self, *, texts: list[str], task: str) -> list[list[float]]:
+        if not texts:
+            return []
+
+        response = requests.post(
+            self.base_url,
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {self.api_key}",
+            },
+            json={
+                "model": self.model,
+                "task": task,
+                "embedding_type": "float",
+                "normalized": True,
+                "input": texts,
+            },
+            timeout=60,
+        )
+        response.raise_for_status()
+        data = response.json().get("data", [])
+        vectors = [row.get("embedding", []) for row in data]
+
+        validated: list[list[float]] = []
+        for vector in vectors:
+            if len(vector) != self.dimensions:
+                raise ValueError(
+                    f"Jina embedding dimension mismatch: got {len(vector)}, expected {self.dimensions}. "
+                    "Adjust EMBEDDING_DIMENSIONS or switch embedding model."
+                )
+            validated.append(vector)
+        return validated
+
+
 class VectorStoreService:
     def __init__(self) -> None:
         self.splitter = SimpleTextSplitter(chunk_size=1200, chunk_overlap=200)
-        self.embeddings = None
+        settings = get_settings()
+        if settings.jina_api_key:
+            self.embeddings = JinaEmbeddings(
+                api_key=settings.jina_api_key,
+                base_url=settings.jina_api_base,
+                model=settings.jina_embedding_model,
+                dimensions=settings.embedding_dimensions,
+            )
+        else:
+            # Lightweight fallback when hosted embedding credentials are not configured.
+            self.embeddings = LocalHashEmbeddings(settings.embedding_dimensions)
 
     def _get_embeddings(self) -> Any:
-        settings = get_settings()
-        if self.embeddings is None:
-            try:
-                from langchain_huggingface import HuggingFaceEmbeddings
-
-                self.embeddings = HuggingFaceEmbeddings(
-                    model_name=settings.embedding_model,
-                    model_kwargs={"device": "cpu"},
-                    encode_kwargs={"normalize_embeddings": True},
-                )
-            except Exception:
-                # Keep the app usable when transformer/torch dependencies are unavailable.
-                self.embeddings = LocalHashEmbeddings(settings.embedding_dimensions)
         return self.embeddings
 
     def add_document(self, *, db: Session, document_id: int, file_hash: str, filename: str, pages: list[tuple[int, str]]) -> None:

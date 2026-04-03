@@ -21,8 +21,11 @@ class Settings(BaseSettings):
     model_name: str = "llama-3.1-8b-instant"
     embedding_model: str = "mixedbread-ai/mxbai-embed-large-v1"
     embedding_dimensions: int = 1024
+    jina_api_key: str | None = None
+    jina_api_base: str = "https://api.jina.ai/v1/embeddings"
+    jina_embedding_model: str = "jina-embeddings-v3"
     groq_api_key: str | None = None
-    web_search_provider: str = "duckduckgo"
+    web_search_provider: str = "tavily"
     tavily_api_key: str | None = None
 
     @property
