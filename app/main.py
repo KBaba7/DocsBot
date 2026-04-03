@@ -1,4 +1,6 @@
+import json
 import re
+import time
 from typing import Any
 
 from fastapi import Cookie, Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile, status
@@ -56,7 +58,10 @@ def _parse_vector_sources(tool_output: str) -> list[dict[str, str]]:
     current_page = ""
 
     for line in lines:
-        match = re.match(r"^\s*\d+\.\s+document_id=(.*?)\s+\|\s+document=(.*?)\s+\|\s+page=(.*?)\s+\|\s+distance=", line)
+        match = re.match(
+            r"^\s*\d+\.\s+document_id=(.*?)\s+\|\s+document=(.*?)\s+\|\s+page=(.*?)\s+\|\s+distance=.*?(?:\s+\|\s+rerank_score=(.*?))?\s*$",
+            line,
+        )
         if match:
             current_document_id = match.group(1).strip()
             current_doc = match.group(2).strip()
@@ -157,6 +162,24 @@ def _strip_sources_from_answer(answer: str) -> str:
             continue
         filtered.append(line)
     return "\n".join(filtered).strip()
+
+
+def _get_current_turn_messages(*, previous_messages: list[Any], all_messages: list[Any]) -> list[Any]:
+    if len(all_messages) >= len(previous_messages):
+        return all_messages[len(previous_messages) :]
+    return all_messages
+
+
+def _build_agent_config(*, user: User, access_token: str | None, x_session_id: str | None) -> dict[str, Any]:
+    if x_session_id:
+        session_key = f"user:{user.id}:session:{x_session_id}"
+    else:
+        session_key = access_token or f"user:{user.id}"
+    return {"configurable": {"thread_id": session_key}}
+
+
+def _sse_event(event: str, data: dict[str, Any]) -> str:
+    return f"event: {event}\ndata: {json.dumps(data)}\n\n"
 
 
 def get_current_user(
@@ -349,15 +372,8 @@ def ask_question(
 ):
     document_service.ensure_page_metadata_for_user(db=db, user=user)
     agent = build_agent(db=db, user=user)
-    
-    # Use session ID from header if provided, otherwise fall back to access token or user ID
-    if x_session_id:
-        session_key = f"user:{user.id}:session:{x_session_id}"
-    else:
-        session_key = access_token or f"user:{user.id}"
-    
-    config = {"configurable": {"thread_id": session_key}}
-    print(f"[Agent] thread_id: {session_key}")
+    config = _build_agent_config(user=user, access_token=access_token, x_session_id=x_session_id)
+    print(f"[Agent] thread_id: {config['configurable']['thread_id']}")
     previous_messages: list[Any] = []
     try:
         state = agent.get_state(config)
@@ -374,9 +390,66 @@ def ask_question(
     answer = final_message if isinstance(final_message, str) else str(final_message)
     answer = _strip_sources_from_answer(answer)
     all_messages = result.get("messages", [])
-    if isinstance(all_messages, list) and len(all_messages) >= len(previous_messages):
-        current_turn_messages = all_messages[len(previous_messages):]
-    else:
-        current_turn_messages = all_messages if isinstance(all_messages, list) else []
+    current_turn_messages = _get_current_turn_messages(
+        previous_messages=previous_messages,
+        all_messages=all_messages if isinstance(all_messages, list) else [],
+    )
     sources = _extract_sources_from_messages(current_turn_messages)
     return AskResponse(answer=answer, sources=sources)
+
+
+@app.post("/ask/stream")
+def ask_question_stream(
+    payload: AskRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+    access_token: str | None = Cookie(default=None),
+    x_session_id: str | None = Header(default=None, alias="X-Session-Id"),
+):
+    document_service.ensure_page_metadata_for_user(db=db, user=user)
+    agent = build_agent(db=db, user=user)
+    config = _build_agent_config(user=user, access_token=access_token, x_session_id=x_session_id)
+
+    previous_messages: list[Any] = []
+    try:
+        state = agent.get_state(config)
+        values = getattr(state, "values", {}) or {}
+        maybe_messages = values.get("messages", [])
+        if isinstance(maybe_messages, list):
+            previous_messages = maybe_messages
+    except Exception:
+        previous_messages = []
+
+    def event_stream():
+        try:
+            result = agent.invoke({"messages": [("user", payload.query)]}, config=config)
+            all_messages = result.get("messages", [])
+            all_messages = all_messages if isinstance(all_messages, list) else []
+            current_turn_messages = _get_current_turn_messages(previous_messages=previous_messages, all_messages=all_messages)
+            if current_turn_messages:
+                final_message = current_turn_messages[-1].content
+                final_answer = final_message if isinstance(final_message, str) else str(final_message)
+                final_answer = _strip_sources_from_answer(final_answer)
+            else:
+                final_answer = ""
+
+            chunk_size = 24
+            for index in range(0, len(final_answer), chunk_size):
+                yield _sse_event("token", {"content": final_answer[index : index + chunk_size]})
+                time.sleep(0.03)
+
+            sources = _extract_sources_from_messages(current_turn_messages)
+            yield _sse_event("sources", {"sources": sources})
+            yield _sse_event("done", {"answer": final_answer})
+        except Exception as exc:
+            yield _sse_event("error", {"detail": str(exc)})
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )

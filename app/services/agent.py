@@ -18,10 +18,6 @@ from app.services.web_search import build_web_search_tool
 
 class VectorSearchInput(BaseModel):
     query: str = Field(..., description="The user question to answer from uploaded documents.")
-    file_hashes: list[str] | None = Field(
-        default=None,
-        description="Optional document hashes to filter search. Leave empty to auto-resolve relevant documents for the current user.",
-    )
 
 
 LANGGRAPH_CHECKPOINTER = MemorySaver()
@@ -43,11 +39,11 @@ def build_agent(*, db: Session, user: User):
     vector_store = VectorStoreService()
     web_search_tool = build_web_search_tool()
 
-    def vector_search(query: str, file_hashes: list[str] | None = None) -> str:
-        resolved_hashes = file_hashes or document_service.resolve_relevant_document_hashes(db, user=user, query=query)
+    def vector_search(query: str) -> str:
+        resolved_hashes = document_service.resolve_relevant_document_hashes(db, user=user, query=query)
         if not resolved_hashes:
             return "No uploaded documents are available for this user."
-        matches = vector_store.similarity_search(db=db, query=query, file_hashes=resolved_hashes, k=4)
+        matches = vector_store.similarity_search(db=db, query=query, file_hashes=resolved_hashes, k=settings.retrieval_k)
         if not matches:
             return f"No vector matches found for hashes: {resolved_hashes}"
         lines = ["Vector evidence (cite document + page + excerpt in final answer):"]
@@ -55,9 +51,10 @@ def build_agent(*, db: Session, user: User):
             page_number = match["metadata"].get("page_number")
             page_label = str(page_number) if page_number is not None else "unknown"
             document_id = match["metadata"].get("document_id")
-            lines.append(
-                f"{index}. document_id={document_id} | document={match['metadata']['filename']} | page={page_label} | distance={match['distance']:.4f}"
-            )
+            score_parts = [f"distance={match['distance']:.4f}"]
+            if "rerank_score" in match:
+                score_parts.append(f"rerank_score={match['rerank_score']:.4f}")
+            lines.append(f"{index}. document_id={document_id} | document={match['metadata']['filename']} | page={page_label} | {' | '.join(score_parts)}")
             lines.append(f"   excerpt: {match['content'][:900].replace(chr(10), ' ')}")
         return "\n\n".join(lines)
 
@@ -66,8 +63,7 @@ def build_agent(*, db: Session, user: User):
         name="vector_search",
         description=(
             "Searches the current user's uploaded documents. "
-            "If file hashes are omitted, the tool first finds the most relevant document hashes from stored metadata and summary, "
-            "then applies those hashes as a vector-search filter."
+            "The tool automatically resolves the most relevant documents for the current user before chunk retrieval."
         ),
         args_schema=VectorSearchInput,
     )

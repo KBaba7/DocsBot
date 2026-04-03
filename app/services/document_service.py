@@ -131,17 +131,17 @@ class DocumentService:
             "deleted_shared_document": deleted_shared_document,
         }
 
-    def resolve_relevant_document_hashes(self, db: Session, *, user: User, query: str, limit: int = 5) -> list[str]:
+    def resolve_relevant_document_hashes(self, db: Session, *, user: User, query: str) -> list[str]:
         docs = self.list_user_documents(db, user)
         if not docs:
             return []
 
         # Send all documents to LLM for semantic matching
-        matched_hashes = self._llm_filter_documents(query=query, candidates=docs, limit=limit)
+        matched_hashes = self._llm_filter_documents(query=query, candidates=docs)
         print("Documents Matched ----->", matched_hashes)
         return matched_hashes
 
-    def _llm_filter_documents(self, *, query: str, candidates: list[Document], limit: int) -> list[str]:
+    def _llm_filter_documents(self, *, query: str, candidates: list[Document]) -> list[str]:
         if not self.settings.groq_api_key or not candidates:
             return []
         if self.matcher_llm is None:
@@ -163,9 +163,8 @@ class DocumentService:
             "Consider semantic similarity, topic alignment, and document purpose.\n\n"
             "IMPORTANT: Only include documents that are actually relevant to answering the query.\n"
             "It's better to return fewer relevant documents than to include irrelevant ones.\n"
-            f"You may return anywhere from 0 to {limit} documents.\n\n"
-            "Return ONLY valid JSON with this exact schema:\n"
-            '{"file_hashes": ["<hash1>", "<hash2>", ...]}\n\n'
+            "Return ONLY a valid JSON array of relevant file hashes, for example:\n"
+            '["<hash1>", "<hash2>"]\n\n'
             f"User query: {query}\n\n"
             f"Available documents:\n{json.dumps(payload, ensure_ascii=True, indent=2)}"
         )
@@ -180,12 +179,11 @@ class DocumentService:
                 content = content.split("```")[1].split("```")[0].strip()
             
             data = json.loads(content)
-            hashes = data.get("file_hashes", [])
+            hashes = data if isinstance(data, list) else []
             valid = {item.get("file_hash", "") for item in payload}
-            return [value for value in hashes if isinstance(value, str) and value in valid][:limit]
+            return [value for value in hashes if isinstance(value, str) and value in valid]
         except Exception:
-            # Fallback: return first N documents
-            return [doc.file_hash for doc in candidates[:limit]]
+            return [doc.file_hash for doc in candidates]
 
     def ensure_page_metadata_for_user(self, *, db: Session, user: User) -> None:
         docs = self.list_user_documents(db, user)

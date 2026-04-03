@@ -24,6 +24,10 @@ class Settings(BaseSettings):
     jina_api_key: str | None = None
     jina_api_base: str = "https://api.jina.ai/v1/embeddings"
     jina_embedding_model: str = "jina-embeddings-v3"
+    jina_reranker_api_base: str = "https://api.jina.ai/v1/rerank"
+    jina_reranker_model: str = "jina-reranker-v3"
+    retrieval_k: int = 4
+    rerank_candidate_k: int = 12
     groq_api_key: str | None = None
     web_search_provider: str = "tavily"
     tavily_api_key: str | None = None

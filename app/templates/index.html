@@ -27,6 +27,7 @@
         <p class="lede">
           Upload PDFs, avoid duplicate reprocessing by file hash, and ask an agent that uses user-scoped document retrieval with optional web search.
         </p>
+        <p class="developer-credit">Developed by Baba Kattubadi</p>
         {% if db_unavailable %}
         <p class="db-warning">
           Database connection is temporarily unavailable. This is usually a transient DNS/network issue with the Supabase host. Please retry shortly.
@@ -34,14 +35,6 @@
         {% endif %}
       </section>
       {% else %}
-      <section class="workspace-strip card">
-        <div>
-          <p class="eyebrow">LangGraph Assignment</p>
-          <h1>DocsQA Workspace</h1>
-          <p class="muted">Private document chat with structured sources.</p>
-        </div>
-        <span class="badge">FastAPI + Supabase + PGVector</span>
-      </section>
       {% endif %}
 
       {% if not user %}
@@ -72,6 +65,18 @@
       <section class="app-layout">
         <aside class="card panel sidebar-panel">
           <div class="panel-head">
+            <p class="eyebrow">LangGraph Assignment</p>
+            <div class="sidebar-title-row">
+              <div>
+                <h1 class="sidebar-title">DocsQA Workspace</h1>
+                <p class="muted">Private document chat with structured sources.</p>
+                <p class="developer-credit">Developed by Baba Kattubadi</p>
+              </div>
+              <span class="badge">FastAPI + Supabase + PGVector</span>
+            </div>
+          </div>
+
+          <div class="panel-head account-head">
             <h2 class="user-email">{{ user.email }}</h2>
             <p class="muted">Your uploaded docs are private to this account.</p>
           </div>
@@ -148,6 +153,7 @@
       // Session management
       let currentSessionId = sessionStorage.getItem("chat_session_id") || `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
       sessionStorage.setItem("chat_session_id", currentSessionId);
+      const chatStorageKey = () => `chat_thread_${currentSessionId}`;
 
       const registerForm = document.getElementById("register-form");
       const loginForm = document.getElementById("login-form");
@@ -162,19 +168,38 @@
       const docDeleteButtons = document.querySelectorAll(".doc-delete-btn");
       const newChatBtn = document.getElementById("new-chat-btn");
 
+      const saveChatThread = () => {
+        if (!chatThread) return;
+        sessionStorage.setItem(chatStorageKey(), chatThread.innerHTML);
+      };
+
+      const restoreChatThread = () => {
+        if (!chatThread) return;
+        const savedThread = sessionStorage.getItem(chatStorageKey());
+        if (savedThread) {
+          chatThread.innerHTML = savedThread;
+        }
+      };
+
+      const resetChatThread = () => {
+        if (!chatThread) return;
+        chatThread.innerHTML = `
+          <article class="chat-msg assistant">
+            <div class="chat-bubble chat-bubble-assistant chat-markdown">
+              <p>Ask anything about your uploaded PDFs and I will answer with citations from retrieved chunks.</p>
+            </div>
+          </article>
+        `;
+        saveChatThread();
+      };
+
+      restoreChatThread();
+
       // New Chat button handler
       newChatBtn?.addEventListener("click", () => {
         currentSessionId = `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
         sessionStorage.setItem("chat_session_id", currentSessionId);
-        if (chatThread) {
-          chatThread.innerHTML = `
-            <article class="chat-msg assistant">
-              <div class="chat-bubble chat-bubble-assistant chat-markdown">
-                <p>Ask anything about your uploaded PDFs and I will answer with citations from retrieved chunks.</p>
-              </div>
-            </article>
-          `;
-        }
+        resetChatThread();
       });
 
       const safeJson = async (response) => {
@@ -327,36 +352,9 @@
         return "_No citations available for this turn._";
       };
 
-      const sourceStopwords = new Set([
-        "the", "and", "for", "with", "from", "that", "this", "what", "who", "how", "are", "was", "were", "is",
-        "of", "about", "tell", "more", "please", "can", "you", "your", "according", "resume"
-      ]);
-
-      const extractQueryTerms = (queryText) => {
-        const raw = (queryText || "").toLowerCase().match(/[a-z0-9_]+/g) || [];
-        const deduped = [];
-        const seen = new Set();
-        for (const term of raw) {
-          if (term.length < 3 || sourceStopwords.has(term) || seen.has(term)) continue;
-          seen.add(term);
-          deduped.push(term);
-        }
-        return deduped;
-      };
-
-      const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-
-      const highlightMatches = (text, terms) => {
-        const plain = text || "";
-        if (!terms.length) return escapeHtml(plain);
-        const pattern = new RegExp(`\\b(${terms.map(escapeRegex).join("|")})\\b`, "gi");
-        return escapeHtml(plain).replace(pattern, "<mark>$1</mark>");
-      };
-
       const renderSourcesHtml = (sources, queryText = "") => {
         const vectorSources = Array.isArray(sources?.vector) ? sources.vector : [];
         const webSources = Array.isArray(sources?.web) ? sources.web : [];
-        const terms = extractQueryTerms(queryText);
 
         const sections = [];
 
@@ -366,7 +364,7 @@
               const documentId = (src.document_id || "").toString().trim();
               const doc = escapeHtml(src.document || "Unknown document");
               const page = escapeHtml(src.page || "unknown");
-              const excerptHtml = highlightMatches(src.excerpt || "", terms);
+              const excerptHtml = escapeHtml(src.excerpt || "");
               const pageNumber = Number.parseInt(src.page || "", 10);
               const pageAnchor = Number.isFinite(pageNumber) && pageNumber > 0 ? `#page=${pageNumber}` : "";
               const pdfUrl = documentId ? `/documents/${encodeURIComponent(documentId)}/pdf${pageAnchor}` : "";
@@ -374,7 +372,9 @@
                 <article class="source-card">
                   <div class="source-meta">
                     <span class="source-doc">${doc}</span>
-                    <span class="source-page">Page ${page}</span>
+                    <div class="source-meta-right">
+                      <span class="source-page">Page ${page}</span>
+                    </div>
                   </div>
                   <p class="source-excerpt">${excerptHtml || "No excerpt available."}</p>
                   ${
@@ -434,6 +434,87 @@
         container.appendChild(details);
       };
 
+      const readStreamingAnswer = async ({ query, target }) => {
+        const response = await fetch("/ask/stream", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Session-Id": currentSessionId
+          },
+          body: JSON.stringify({ query }),
+        });
+
+        if (!response.ok || !response.body) {
+          const body = await safeJson(response);
+          throw new Error(prettyError(body));
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        let answerText = "";
+        let sources = null;
+
+        const processEvent = (rawEvent) => {
+          const lines = rawEvent.split("\n");
+          let eventName = "message";
+          const dataLines = [];
+
+          for (const line of lines) {
+            if (line.startsWith("event:")) {
+              eventName = line.slice(6).trim();
+            } else if (line.startsWith("data:")) {
+              dataLines.push(line.slice(5).trim());
+            }
+          }
+
+          if (!dataLines.length) return;
+          const payload = JSON.parse(dataLines.join("\n"));
+
+          if (eventName === "token") {
+            answerText += payload.content || "";
+            target.classList.remove("chat-pending");
+            target.classList.add("chat-markdown");
+            target.innerHTML = renderMarkdown(answerText || "Thinking...");
+            chatThread.scrollTop = chatThread.scrollHeight;
+            return;
+          }
+
+          if (eventName === "sources") {
+            sources = payload.sources || null;
+            return;
+          }
+
+          if (eventName === "done") {
+            answerText = payload.answer || answerText || "Response received.";
+            target.classList.remove("chat-pending");
+            target.classList.add("chat-markdown");
+            renderAssistantResponse(target, answerText, sources, query);
+            chatThread.scrollTop = chatThread.scrollHeight;
+            return;
+          }
+
+          if (eventName === "error") {
+            throw new Error(payload.detail || "Streaming failed.");
+          }
+        };
+
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const events = buffer.split("\n\n");
+          buffer = events.pop() || "";
+          for (const rawEvent of events) {
+            if (rawEvent.trim()) processEvent(rawEvent);
+          }
+        }
+
+        buffer += decoder.decode();
+        if (buffer.trim()) processEvent(buffer);
+        return { answer: answerText, sources };
+      };
+
       const appendMessage = ({ role, text, markdown = false, pending = false, isError = false }) => {
         if (!chatThread) return null;
         const row = document.createElement("article");
@@ -454,6 +535,7 @@
         row.appendChild(bubble);
         chatThread.appendChild(row);
         chatThread.scrollTop = chatThread.scrollHeight;
+        saveChatThread();
         return bubble;
       };
 
@@ -493,6 +575,7 @@
         event.preventDefault();
         const response = await fetch("/logout", { method: "POST" });
         if (response.ok) {
+          sessionStorage.removeItem(chatStorageKey());
           window.location.reload();
         }
       });
@@ -528,6 +611,7 @@
         uploadResult.classList.toggle("error", !response.ok);
         setBusy(uploadForm, false);
         if (response.ok) {
+          saveChatThread();
           window.location.reload();
         }
       });
@@ -562,34 +646,23 @@
         if (queryInput) queryInput.value = "";
         setBusy(askForm, true);
         const pendingBubble = appendMessage({ role: "assistant", text: "Thinking...", markdown: false, pending: true });
-
-        const response = await fetch("/ask", {
-          method: "POST",
-          headers: { 
-            "Content-Type": "application/json",
-            "X-Session-Id": currentSessionId
-          },
-          body: JSON.stringify({ query }),
-        });
-        const body = await safeJson(response);
         const target = pendingBubble || appendMessage({ role: "assistant", text: "", markdown: false });
         if (!target) {
           setBusy(askForm, false);
           return;
         }
-        target.classList.remove("chat-pending");
-
-        if (response.ok) {
-          const answerText = body.answer || "Response received.";
-          target.classList.add("chat-markdown");
-          renderAssistantResponse(target, answerText, body.sources || null, query);
-        } else {
-          const message = prettyError(body);
+        try {
+          await readStreamingAnswer({ query, target });
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Request failed.";
+          target.classList.remove("chat-pending");
           target.classList.add("chat-error");
           target.textContent = message;
+        } finally {
+          chatThread.scrollTop = chatThread.scrollHeight;
+          saveChatThread();
+          setBusy(askForm, false);
         }
-        chatThread.scrollTop = chatThread.scrollHeight;
-        setBusy(askForm, false);
       });
 
       queryInput?.addEventListener("keydown", (event) => {
