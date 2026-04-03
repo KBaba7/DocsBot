@@ -158,3 +158,26 @@ This repo now includes a `render.yaml` Blueprint.
 Render uses:
 - Build command: `pip install -e .`
 - Start command: `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
+
+## Deploy on Fly.io
+
+This repo includes `Dockerfile` and `fly.toml`.
+
+1. Install Fly CLI:
+   - macOS: `brew install flyctl`
+2. Login:
+   - `fly auth login`
+3. If app name `docsbot-kbaba7` is unavailable, change `app` in `fly.toml`.
+4. Create app (first time only):
+   - `fly apps create docsbot-kbaba7`
+5. Set secrets:
+   - `fly secrets set SECRET_KEY=...`
+   - `fly secrets set DATABASE_URL=...`
+   - `fly secrets set GROQ_API_KEY=...`
+   - `fly secrets set SUPABASE_URL=...`
+   - `fly secrets set SUPABASE_SERVICE_ROLE_KEY=...`
+   - optional: `fly secrets set TAVILY_API_KEY=...`
+6. Deploy:
+   - `fly deploy`
+7. Open app:
+   - `fly open`
