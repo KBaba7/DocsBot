@@ -27,8 +27,8 @@ Uploaded PDFs are parsed page by page and split into chunks.
 Each chunk is stored with metadata (document, page number, chunk index) and embedded into `pgvector`.
 
 At question time:
-1. Document matching uses keyword scoring + LLM semantic reranking
-2. Relevant chunks are retrieved from matched documents via vector search
+1. LLM-based document filtering selects relevant documents from user's library
+2. Vector search retrieves relevant chunks from selected documents
 3. The agent answers from those chunks when possible
 4. If evidence is weak, the agent uses web search and cites external URLs
 
@@ -84,12 +84,12 @@ Why I chose this:
 - avoids duplicate indexing,
 - keeps retrieval secure per user.
 
-I also implemented a two-stage document matching system:
+I also implemented LLM-based document filtering:
 
-- Stage 1: Fast keyword scoring checks exact phrase matches and word-level matches across filename, summary, and preview text with weighted scoring (filename matches score higher than preview matches).
-- Stage 2: LLM semantic reranking takes the top scored candidates (up to 8) and reranks them based on semantic similarity to the query.
-
-This hybrid approach balances speed and accuracy - keyword filtering is fast and catches obvious matches, while the LLM handles nuanced semantic understanding without processing every document.
+- The system sends all user documents (filename, summary, preview) to the LLM
+- LLM semantically analyzes and selects only truly relevant documents for the query
+- Returns 0 to N documents based on actual relevance (not forced to always return the max limit)
+- Fallback returns first N documents if LLM call fails
 
 ## Challenges I Ran Into
 

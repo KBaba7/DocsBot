@@ -118,7 +118,10 @@
         <section class="card panel chat-shell chat-panel">
           <div class="panel-head panel-head-inline">
             <h2>DocsQA Chat</h2>
-            <span class="badge">Markdown enabled</span>
+            <div style="display: flex; gap: 8px; align-items: center;">
+              <button type="button" id="new-chat-btn" class="secondary" style="font-size: 0.875rem; padding: 6px 12px;">New Chat</button>
+              <span class="badge">Markdown enabled</span>
+            </div>
           </div>
           <div id="chat-thread" class="chat-thread">
             <article class="chat-msg assistant">
@@ -142,6 +145,10 @@
     </main>
 
     <script>
+      // Session management
+      let currentSessionId = sessionStorage.getItem("chat_session_id") || `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      sessionStorage.setItem("chat_session_id", currentSessionId);
+
       const registerForm = document.getElementById("register-form");
       const loginForm = document.getElementById("login-form");
       const logoutForm = document.getElementById("logout-form");
@@ -153,6 +160,22 @@
       const chatThread = document.getElementById("chat-thread");
       const queryInput = document.getElementById("query");
       const docDeleteButtons = document.querySelectorAll(".doc-delete-btn");
+      const newChatBtn = document.getElementById("new-chat-btn");
+
+      // New Chat button handler
+      newChatBtn?.addEventListener("click", () => {
+        currentSessionId = `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        sessionStorage.setItem("chat_session_id", currentSessionId);
+        if (chatThread) {
+          chatThread.innerHTML = `
+            <article class="chat-msg assistant">
+              <div class="chat-bubble chat-bubble-assistant chat-markdown">
+                <p>Ask anything about your uploaded PDFs and I will answer with citations from retrieved chunks.</p>
+              </div>
+            </article>
+          `;
+        }
+      });
 
       const safeJson = async (response) => {
         try {
@@ -542,7 +565,10 @@
 
         const response = await fetch("/ask", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: { 
+            "Content-Type": "application/json",
+            "X-Session-Id": currentSessionId
+          },
           body: JSON.stringify({ query }),
         });
         const body = await safeJson(response);

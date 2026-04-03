@@ -1,7 +1,7 @@
 import re
 from typing import Any
 
-from fastapi import Cookie, Depends, FastAPI, File, Form, HTTPException, Request, UploadFile, status
+from fastapi import Cookie, Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile, status
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.responses import StreamingResponse
 from langchain_core.messages import HumanMessage, ToolMessage
@@ -345,11 +345,19 @@ def ask_question(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
     access_token: str | None = Cookie(default=None),
+    x_session_id: str | None = Header(default=None, alias="X-Session-Id"),
 ):
     document_service.ensure_page_metadata_for_user(db=db, user=user)
     agent = build_agent(db=db, user=user)
-    session_key = access_token or f"user:{user.id}"
+    
+    # Use session ID from header if provided, otherwise fall back to access token or user ID
+    if x_session_id:
+        session_key = f"user:{user.id}:session:{x_session_id}"
+    else:
+        session_key = access_token or f"user:{user.id}"
+    
     config = {"configurable": {"thread_id": session_key}}
+    print(f"[Agent] thread_id: {session_key}")
     previous_messages: list[Any] = []
     try:
         state = agent.get_state(config)

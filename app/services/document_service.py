@@ -136,69 +136,19 @@ class DocumentService:
         if not docs:
             return []
 
-        query_lower = query.lower()
-        scored: list[tuple[float, str, Document]] = []
-        
-        for doc in docs:
-            score = 0.0
-            
-            # Exact phrase matching (highest priority)
-            if query_lower in (doc.filename or "").lower():
-                score += 10.0
-            if query_lower in (doc.summary or "").lower():
-                score += 5.0
-            if query_lower in (doc.extracted_preview or "").lower():
-                score += 2.0
-            
-            # Word-level matching
-            query_words = query_lower.split()
-            filename_lower = (doc.filename or "").lower()
-            summary_lower = (doc.summary or "").lower()
-            preview_lower = (doc.extracted_preview or "").lower()
-            
-            for word in query_words:
-                if len(word) > 2:  # Skip very short words
-                    if word in filename_lower:
-                        score += 3.0
-                    if word in summary_lower:
-                        score += 1.5
-                    if word in preview_lower:
-                        score += 0.5
-            
-            if score > 0:
-                scored.append((score, doc.file_hash, doc))
+        # Send all documents to LLM for semantic matching
+        matched_hashes = self._llm_filter_documents(query=query, candidates=docs, limit=limit)
+        print("Documents Matched ----->", matched_hashes)
+        return matched_hashes
 
-        # Sort by score
-        scored.sort(reverse=True, key=lambda x: x[0])
-        
-        # Take top candidates for LLM (up to 8)
-        candidates_count = min(max(limit * 2, 8), len(scored)) if scored else min(limit, len(docs))
-        
-        if scored:
-            ranked_docs = [doc for _, _, doc in scored[:candidates_count]]
-            ranked_hashes = [file_hash for _, file_hash, _ in scored[:candidates_count]]
-        else:
-            # No keyword matches, use all docs up to limit
-            ranked_docs = docs[:candidates_count]
-            ranked_hashes = [doc.file_hash for doc in ranked_docs]
-
-        # LLM reranking
-        llm_ranked_hashes = self._llm_verify_document_hashes(query=query, candidates=ranked_docs, limit=limit)
-        
-        # Merge: LLM results first, then keyword fallback
-        merged = llm_ranked_hashes + [h for h in ranked_hashes if h not in llm_ranked_hashes]
-        return merged[:limit]
-
-
-
-    def _llm_verify_document_hashes(self, *, query: str, candidates: list[Document], limit: int) -> list[str]:
+    def _llm_filter_documents(self, *, query: str, candidates: list[Document], limit: int) -> list[str]:
         if not self.settings.groq_api_key or not candidates:
             return []
         if self.matcher_llm is None:
             self.matcher_llm = ChatGroq(api_key=self.settings.groq_api_key, model=self.settings.model_name, temperature=0)
 
         payload = []
-        for doc in candidates[:8]:
+        for doc in candidates:
             payload.append(
                 {
                     "file_hash": doc.file_hash,
@@ -209,12 +159,15 @@ class DocumentService:
             )
 
         prompt = (
-            "Rank the most relevant documents for the user query based on semantic similarity.\n"
+            "You are a document relevance filter. Analyze the user query and select ONLY the truly relevant documents.\n"
+            "Consider semantic similarity, topic alignment, and document purpose.\n\n"
+            "IMPORTANT: Only include documents that are actually relevant to answering the query.\n"
+            "It's better to return fewer relevant documents than to include irrelevant ones.\n"
+            f"You may return anywhere from 0 to {limit} documents.\n\n"
             "Return ONLY valid JSON with this exact schema:\n"
-            '{"file_hashes": ["<hash1>", "<hash2>"]}\n'
-            f"Return at most {limit} hashes ordered by relevance.\n\n"
-            f"User query:\n{query}\n\n"
-            f"Candidates:\n{json.dumps(payload, ensure_ascii=True)}"
+            '{"file_hashes": ["<hash1>", "<hash2>", ...]}\n\n'
+            f"User query: {query}\n\n"
+            f"Available documents:\n{json.dumps(payload, ensure_ascii=True, indent=2)}"
         )
         try:
             response = self.matcher_llm.invoke(prompt)
@@ -231,7 +184,8 @@ class DocumentService:
             valid = {item.get("file_hash", "") for item in payload}
             return [value for value in hashes if isinstance(value, str) and value in valid][:limit]
         except Exception:
-            return []
+            # Fallback: return first N documents
+            return [doc.file_hash for doc in candidates[:limit]]
 
     def ensure_page_metadata_for_user(self, *, db: Session, user: User) -> None:
         docs = self.list_user_documents(db, user)
