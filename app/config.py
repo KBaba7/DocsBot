@@ -31,7 +31,6 @@ class Settings(BaseSettings):
     groq_api_key: str | None = None
     web_search_provider: str = "tavily"
     tavily_api_key: str | None = None
-    cookie_secure: bool = False
 
     @property
     def upload_path(self) -> Path:

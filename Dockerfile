@@ -1,25 +1,15 @@
 FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    HOME=/home/user \
-    PATH=/home/user/.local/bin:$PATH
+    PYTHONUNBUFFERED=1
 
-WORKDIR /home/user/app
+WORKDIR /app
 
-# Create non-root user (required by HuggingFace Spaces)
-RUN useradd -m -u 1000 user
-
-COPY --chown=user pyproject.toml README.md ./
-COPY --chown=user app ./app
+COPY pyproject.toml README.md ./
+COPY app ./app
 
 RUN pip install --no-cache-dir -e .
 
-# Uploads directory writable by non-root user
-RUN mkdir -p /home/user/app/uploads && chown -R user /home/user/app/uploads
+EXPOSE 8080
 
-USER user
-
-EXPOSE 7860
-
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "7860"]
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080"]

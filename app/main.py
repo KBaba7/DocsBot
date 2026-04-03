@@ -13,7 +13,6 @@ from sqlalchemy.exc import OperationalError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.config import get_settings
 from app.database import get_db, init_db
 from app.models import Document, User, UserDocument
 from app.schemas import AskRequest, AskResponse, UserCreate, UserLogin
@@ -33,11 +32,6 @@ document_service = DocumentService()
 storage_service = StorageService()
 MAX_UPLOAD_FILES = 5
 MAX_PDF_PAGES = 10
-
-_settings = get_settings()
-# On HuggingFace Spaces (and any HTTPS deployment) cookies must be Secure.
-# We detect this via an env var; locally it stays False so http:// still works.
-_COOKIE_SECURE: bool = _settings.cookie_secure
 
 
 def _message_content_to_text(content: Any) -> str:
@@ -247,7 +241,11 @@ def register(email: str = Form(...), password: str = Form(...), db: Session = De
         status_code=status.HTTP_201_CREATED,
         content={"message": "Registered successfully", "email": user.email},
     )
-    response.set_cookie("access_token", token, httponly=True, samesite="lax", secure=_COOKIE_SECURE, path="/")
+    response.set_cookie("access_token", token, httponly=True, samesite="lax", path="/")
+    return response
+
+
+@app.post("/login")
 def login(email: str = Form(...), password: str = Form(...), db: Session = Depends(get_db)):
     payload = UserLogin(email=email, password=password)
     user = db.scalar(select(User).where(User.email == payload.email))
@@ -255,7 +253,7 @@ def login(email: str = Form(...), password: str = Form(...), db: Session = Depen
         raise HTTPException(status_code=400, detail="Invalid credentials")
     token = create_access_token(str(user.id))
     response = JSONResponse(content={"message": "Login successful", "email": user.email})
-    response.set_cookie("access_token", token, httponly=True, samesite="lax", secure=_COOKIE_SECURE, path="/")
+    response.set_cookie("access_token", token, httponly=True, samesite="lax", path="/")
     return response
 
 

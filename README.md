@@ -1,13 +1,3 @@
----
-title: DocsQA Smart Research Assistant
-emoji: 📄
-colorFrom: blue
-colorTo: indigo
-sdk: docker
-pinned: false
-app_port: 7860
----
-
 # DocsQA Smart Research Assistant
 
 This is my take-home submission for the ABSTRABIT AI/ML Engineer assignment: a RAG-powered assistant where users upload PDFs, ask questions, and get grounded answers with citations.
