@@ -137,3 +137,24 @@ Sample PDFs used during development are in `test_documents/`.
 
 - Live deployed URL: _add your deployed link here_
 - Loom walkthrough (<5 min): _add your Loom link here_
+
+## Deploy on Render
+
+This repo now includes a `render.yaml` Blueprint.
+
+1. Push the latest `main` branch to GitHub.
+2. In Render, click **New +** -> **Blueprint**.
+3. Connect GitHub and select this repository.
+4. Render will detect `render.yaml` and create a `docsbot` web service.
+5. Set required secret env vars in Render:
+   - `SECRET_KEY`
+   - `DATABASE_URL`
+   - `GROQ_API_KEY`
+   - `SUPABASE_URL`
+   - `SUPABASE_SERVICE_ROLE_KEY`
+   - optionally `TAVILY_API_KEY`
+6. Deploy and open the generated Render URL.
+
+Render uses:
+- Build command: `pip install -e .`
+- Start command: `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
