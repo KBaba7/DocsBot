@@ -22,6 +22,9 @@ If the uploaded documents are not enough, the agent falls back to web search and
 - Supabase Postgres + `pgvector`
 - Railway deployment
 
+## Simple Workflow
+[Blank diagram.pdf](https://github.com/user-attachments/files/26467727/Blank.diagram.pdf)
+
 ## How Retrieval Works
 
 Uploaded PDFs are parsed page by page and split into chunks.  
