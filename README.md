@@ -6,7 +6,7 @@ This is my take-home submission for the ABSTRABIT AI/ML Engineer assignment: a R
 
 - Live app (Railway): `https://docsbot-web-production.up.railway.app`
 - GitHub: `https://github.com/KBaba7/DocsBot`
-- Loom walkthrough: [_Loom Video_](https://www.loom.com/share/256e911a158e4258ac3cd116546d1f04)
+- Walkthrough Video: [_Drive Link_](https://drive.google.com/file/d/1n3zBS6smiLm8o5HS2JquiJ4tl4LypLQd/view?usp=sharing)
 
 ## What I Built
 
