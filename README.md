@@ -27,9 +27,10 @@ Uploaded PDFs are parsed page by page and split into chunks.
 Each chunk is stored with metadata (document, page number, chunk index) and embedded into `pgvector`.
 
 At question time:
-1. The app searches relevant chunks from the user’s accessible documents.
-2. The agent answers from those chunks when possible.
-3. If evidence is weak, the agent uses web search and cites external URLs.
+1. Document matching uses keyword scoring + LLM semantic reranking
+2. Relevant chunks are retrieved from matched documents via vector search
+3. The agent answers from those chunks when possible
+4. If evidence is weak, the agent uses web search and cites external URLs
 
 ## Chunking Strategy
 
@@ -62,7 +63,7 @@ Each turn stores/returns source metadata separately from the answer body.
 - Vector source cards include:
   - document name
   - page number
-  - excerpt (short snippet from retrieved chunk)
+  - snippet (short snippet from retrieved chunk)
 - Web source cards include:
   - title
   - URL
@@ -83,6 +84,13 @@ Why I chose this:
 - avoids duplicate indexing,
 - keeps retrieval secure per user.
 
+I also implemented a two-stage document matching system:
+
+- Stage 1: Fast keyword scoring checks exact phrase matches and word-level matches across filename, summary, and preview text with weighted scoring (filename matches score higher than preview matches).
+- Stage 2: LLM semantic reranking takes the top scored candidates (up to 8) and reranks them based on semantic similarity to the query.
+
+This hybrid approach balances speed and accuracy - keyword filtering is fast and catches obvious matches, while the LLM handles nuanced semantic understanding without processing every document.
+
 ## Challenges I Ran Into
 
 1. Heavy embedding dependencies made deployment images too large.
@@ -94,10 +102,11 @@ Why I chose this:
 
 ## If I Had More Time
 
-- Add reranking (cross-encoder) for better precision on long multi-doc queries.
-- Add automated citation-faithfulness checks.
-- Add Alembic migrations for cleaner schema evolution.
-- Add stronger eval/observability for routing and retrieval quality.
+- Add conversation history UI to display past chat sessions
+- Add reranking (cross-encoder) for better precision on long multi-doc queries
+- Add automated citation-faithfulness checks
+- Add Alembic migrations for cleaner schema evolution
+- Add stronger eval/observability for routing and retrieval quality
 
 ## Local Setup
 

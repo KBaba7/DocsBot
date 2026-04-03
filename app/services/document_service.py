@@ -1,4 +1,6 @@
 import hashlib
+import json
+import re
 
 from fastapi import UploadFile
 from langchain_groq import ChatGroq
@@ -18,6 +20,7 @@ class DocumentService:
         self.storage = StorageService()
         self.vector_store = VectorStoreService()
         self.summarizer = None
+        self.matcher_llm = None
 
     async def save_upload(self, upload: UploadFile) -> tuple[bytes, str]:
         content = await upload.read()
@@ -129,45 +132,106 @@ class DocumentService:
         }
 
     def resolve_relevant_document_hashes(self, db: Session, *, user: User, query: str, limit: int = 5) -> list[str]:
-        stopwords = {
-            "the",
-            "and",
-            "for",
-            "with",
-            "from",
-            "that",
-            "this",
-            "what",
-            "who",
-            "how",
-            "are",
-            "was",
-            "were",
-            "is",
-            "of",
-            "about",
-            "tell",
-            "more",
-            "please",
-            "can",
-            "you",
-            "your",
-        }
-        terms = [term.strip() for term in query.lower().split() if len(term.strip()) > 2 and term.strip() not in stopwords]
         docs = self.list_user_documents(db, user)
-        scored: list[tuple[int, str]] = []
+        if not docs:
+            return []
+
+        query_lower = query.lower()
+        scored: list[tuple[float, str, Document]] = []
+        
         for doc in docs:
-            haystack = f"{doc.filename} {doc.summary} {doc.extracted_preview}".lower()
-            filename_score = sum(3 for term in terms if term in (doc.filename or "").lower())
-            body_score = sum(1 for term in terms if term in haystack)
-            score = filename_score + body_score
+            score = 0.0
+            
+            # Exact phrase matching (highest priority)
+            if query_lower in (doc.filename or "").lower():
+                score += 10.0
+            if query_lower in (doc.summary or "").lower():
+                score += 5.0
+            if query_lower in (doc.extracted_preview or "").lower():
+                score += 2.0
+            
+            # Word-level matching
+            query_words = query_lower.split()
+            filename_lower = (doc.filename or "").lower()
+            summary_lower = (doc.summary or "").lower()
+            preview_lower = (doc.extracted_preview or "").lower()
+            
+            for word in query_words:
+                if len(word) > 2:  # Skip very short words
+                    if word in filename_lower:
+                        score += 3.0
+                    if word in summary_lower:
+                        score += 1.5
+                    if word in preview_lower:
+                        score += 0.5
+            
             if score > 0:
-                scored.append((score, doc.file_hash))
-        scored.sort(reverse=True)
-        hashes = [file_hash for _, file_hash in scored[:limit]]
-        if hashes:
-            return hashes
-        return [doc.file_hash for doc in docs[:limit]]
+                scored.append((score, doc.file_hash, doc))
+
+        # Sort by score
+        scored.sort(reverse=True, key=lambda x: x[0])
+        
+        # Take top candidates for LLM (up to 8)
+        candidates_count = min(max(limit * 2, 8), len(scored)) if scored else min(limit, len(docs))
+        
+        if scored:
+            ranked_docs = [doc for _, _, doc in scored[:candidates_count]]
+            ranked_hashes = [file_hash for _, file_hash, _ in scored[:candidates_count]]
+        else:
+            # No keyword matches, use all docs up to limit
+            ranked_docs = docs[:candidates_count]
+            ranked_hashes = [doc.file_hash for doc in ranked_docs]
+
+        # LLM reranking
+        llm_ranked_hashes = self._llm_verify_document_hashes(query=query, candidates=ranked_docs, limit=limit)
+        
+        # Merge: LLM results first, then keyword fallback
+        merged = llm_ranked_hashes + [h for h in ranked_hashes if h not in llm_ranked_hashes]
+        return merged[:limit]
+
+
+
+    def _llm_verify_document_hashes(self, *, query: str, candidates: list[Document], limit: int) -> list[str]:
+        if not self.settings.groq_api_key or not candidates:
+            return []
+        if self.matcher_llm is None:
+            self.matcher_llm = ChatGroq(api_key=self.settings.groq_api_key, model=self.settings.model_name, temperature=0)
+
+        payload = []
+        for doc in candidates[:8]:
+            payload.append(
+                {
+                    "file_hash": doc.file_hash,
+                    "filename": doc.filename,
+                    "summary": (doc.summary or "")[:1000],
+                    "preview": (doc.extracted_preview or "")[:1200],
+                }
+            )
+
+        prompt = (
+            "Rank the most relevant documents for the user query based on semantic similarity.\n"
+            "Return ONLY valid JSON with this exact schema:\n"
+            '{"file_hashes": ["<hash1>", "<hash2>"]}\n'
+            f"Return at most {limit} hashes ordered by relevance.\n\n"
+            f"User query:\n{query}\n\n"
+            f"Candidates:\n{json.dumps(payload, ensure_ascii=True)}"
+        )
+        try:
+            response = self.matcher_llm.invoke(prompt)
+            content = response.content if isinstance(response.content, str) else str(response.content)
+            
+            # Handle markdown code blocks
+            if "```json" in content:
+                content = content.split("```json")[1].split("```")[0].strip()
+            elif "```" in content:
+                content = content.split("```")[1].split("```")[0].strip()
+            
+            data = json.loads(content)
+            hashes = data.get("file_hashes", [])
+            valid = {item.get("file_hash", "") for item in payload}
+            return [value for value in hashes if isinstance(value, str) and value in valid][:limit]
+        except Exception:
+            return []
 
     def ensure_page_metadata_for_user(self, *, db: Session, user: User) -> None:
         docs = self.list_user_documents(db, user)
