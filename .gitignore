@@ -16,3 +16,5 @@ docsqa_langgraph_assignment.egg-info/
 uploads/
 .idea/
 .vscode/
+frontend/node_modules/
+frontend/dist/

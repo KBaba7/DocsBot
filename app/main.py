@@ -1,14 +1,15 @@
 import json
 import re
 import time
+from pathlib import Path
 from typing import Any
 
-from fastapi import Cookie, Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile, status
+from fastapi import Cookie, Depends, FastAPI, File, Form, Header, HTTPException, UploadFile, status
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.responses import StreamingResponse
+from fastapi.middleware.cors import CORSMiddleware
 from langchain_core.messages import HumanMessage, ToolMessage
 from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
 from sqlalchemy.exc import OperationalError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -26,8 +27,18 @@ from app.services.storage_service import StorageService
 init_db()
 
 app = FastAPI(title="DocsQA Assignment")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
-templates = Jinja2Templates(directory="app/templates")
+
+_react_assets = Path("app/static/react/assets")
+if _react_assets.exists():
+    app.mount("/assets", StaticFiles(directory=str(_react_assets)), name="react-assets")
 document_service = DocumentService()
 storage_service = StorageService()
 MAX_UPLOAD_FILES = 5
@@ -204,27 +215,11 @@ def get_current_user(
 
 
 @app.get("/", response_class=HTMLResponse)
-def home(request: Request, access_token: str | None = Cookie(default=None), db: Session = Depends(get_db)):
-    user = None
-    documents = []
-    db_unavailable = False
-    if access_token:
-        user_id = decode_access_token(access_token)
-        if user_id:
-            try:
-                user = db.get(User, int(user_id))
-                if user:
-                    documents = document_service.list_user_documents(db, user)
-            except OperationalError:
-                # Keep homepage responsive during transient DNS/DB outages.
-                db_unavailable = True
-                user = None
-                documents = []
-    return templates.TemplateResponse(
-        request=request,
-        name="index.html",
-        context={"request": request, "user": user, "documents": documents, "db_unavailable": db_unavailable},
-    )
+def home():
+    index_path = Path("app/static/react/index.html")
+    if index_path.exists():
+        return HTMLResponse(content=index_path.read_text(), status_code=200)
+    return HTMLResponse(content="<p>Run <code>cd frontend && npm run build</code> to build the React app.</p>", status_code=200)
 
 
 @app.post("/register")
