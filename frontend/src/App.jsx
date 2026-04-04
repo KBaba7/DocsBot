@@ -329,6 +329,7 @@ function Workspace({ user, documents: initialDocs, onLogout }) {
       )
       const updated = await fetch('/documents').then(r => r.json()).catch(() => docs)
       setDocs(updated)
+      setTimeout(() => setUploadMsg(''), 4000)
     } else {
       setUploadErr(true)
       setUploadMsg(prettyError(body))
