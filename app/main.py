@@ -252,6 +252,11 @@ def login(email: str = Form(...), password: str = Form(...), db: Session = Depen
     return response
 
 
+@app.get("/me")
+def me(user: User = Depends(get_current_user)):
+    return {"email": user.email}
+
+
 @app.post("/logout")
 def logout(access_token: str | None = Cookie(default=None)):
     response = JSONResponse(content={"message": "Logged out successfully"})

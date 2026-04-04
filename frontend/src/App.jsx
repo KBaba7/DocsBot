@@ -550,15 +550,14 @@ export default function App() {
 
   const fetchState = useCallback(async () => {
     try {
-      const res = await fetch('/documents')
-      if (res.ok) {
-        const docs = await res.json()
-        // get user info from a lightweight endpoint
-        const meRes = await fetch('/').then(r => r.text())
-        // parse email from HTML (fallback: just mark as logged in)
-        const emailMatch = meRes.match(/class="user-email"[^>]*>([^<]+)</)
-        const email = emailMatch ? emailMatch[1].trim() : 'user'
-        setAppState({ loggedIn: true, user: { email }, documents: docs })
+      const [docsRes, meRes] = await Promise.all([
+        fetch('/documents'),
+        fetch('/me'),
+      ])
+      if (docsRes.ok && meRes.ok) {
+        const docs = await docsRes.json()
+        const me = await meRes.json()
+        setAppState({ loggedIn: true, user: { email: me.email }, documents: docs })
       } else {
         setAppState({ loggedIn: false })
       }
