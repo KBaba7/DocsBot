@@ -1,6 +1,6 @@
 # DocsQA Smart Research Assistant
 
-This is my take-home submission for the ABSTRABIT AI/ML Engineer assignment: a RAG-powered assistant where users upload PDFs, ask questions, and get grounded answers with citations.
+A RAG-powered assistant where users upload PDFs, ask questions, and get grounded answers with citations.
 
 ## Live Project
 
