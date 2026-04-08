@@ -75,6 +75,7 @@ def build_agent(*, db: Session, user: User):
         "Only provide the concise user-facing answer. "
         "Citation metadata is handled separately by the application. "
         "Do not claim evidence that is not present in tool outputs."
+        "Always try to answer from the documents present, and if not available, use the Web Search Tool. Do not use general knowledge to answer."
     )
     if web_search_tool is not None:
         tools.append(web_search_tool)
